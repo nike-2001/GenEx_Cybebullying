@@ -104,7 +104,7 @@ def _prepare_bart_decoder_inputs(
     none are provided. This mimics the default behavior in fairseq. To override it pass in masks.
     """
     pad_token_id = config.pad_token_id
-    need_causal_mask = not config.output_past
+    need_causal_mask = not config.use_cache
     if decoder_input_ids is None:
         decoder_input_ids = shift_tokens_right(input_ids, pad_token_id)
     bsz, tgt_len = decoder_input_ids.size()[:2]
@@ -433,7 +433,7 @@ class BartDecoder(nn.Module):
 
     def __init__(self, config: BartConfig, embed_tokens: nn.Embedding):
         super().__init__()
-        self.output_past = config.output_past
+        self.use_cache = config.use_cache
         self.output_attentions = config.output_attentions
         self.output_hidden_states = config.output_hidden_states
         self.dropout = config.dropout
@@ -513,7 +513,7 @@ class BartDecoder(nn.Module):
                 need_attn_weights=self.output_attentions,
             )
 
-            if self.output_past:
+            if self.use_cache:
                 next_decoder_cache.append(layer_past.copy())
             if self.output_hidden_states:
                 all_hidden_states += (x,)
@@ -524,7 +524,7 @@ class BartDecoder(nn.Module):
         all_hidden_states = [hidden_state.transpose(0, 1) for hidden_state in all_hidden_states]
         x = x.transpose(0, 1)
 
-        if self.output_past:
+        if self.use_cache:
             next_cache = ((encoder_hidden_states, encoder_padding_mask), next_decoder_cache)
         else:
             next_cache = None
@@ -1039,7 +1039,7 @@ class BartForMaskedLM(PretrainedBartModel):
 
         Examples::
 
-            config = BartConfig(vocab_size=50264, output_past=True)
+            config = BartConfig(vocab_size=50264, use_cache=True)
             model = AutoModelWithLMHead.from_pretrained('bart-large-cnn', config=config)
             tokenizer = AutoTokenizer.from_pretrained('bart-large-cnn')
             ARTICLE_TO_SUMMARIZE = "My friends are cool but they eat too many carbs."
@@ -1054,7 +1054,7 @@ class BartForMaskedLM(PretrainedBartModel):
         eos_token_id = self.config.eos_token_id
         batch_size, cur_len = input_ids.shape
         assert input_ids is not None
-        assert self.config.output_past, "Generating with bart requires instantiating a config with output_past=True"
+        assert self.config.use_cache, "Generating with bart requires instantiating a config with use_cache=True"
         assert isinstance(max_length, int) and max_length > 0, "`max_length` should be a strictly positive integer."
         assert isinstance(num_beams, int) and num_beams > 0, "`num_beams` should be a strictly positive integer."
         assert repetition_penalty >= 1.0, "`repetition_penalty` should be >= 1."
@@ -1130,7 +1130,7 @@ class BartForMaskedLM(PretrainedBartModel):
             elif step == max_length:  # FORCE EOS to be chosen
                 lprobs[:, :eos_token_id] = -math.inf
                 lprobs[:, eos_token_id + 1 :] = -math.inf
-            assert self._do_output_past(outputs)
+            assert self._do_use_cache(outputs)
             decoder_cache = outputs[1]
             if repetition_penalty != 1.0:
                 self.enforce_repetition_penalty_(lprobs, batch_size, num_beams, prev_output_tokens, repetition_penalty)

@@ -27,7 +27,7 @@ from sklearn.model_selection import train_test_split
 
 
 # device = 'cuda' if cuda.is_available() else 'cpu'
-torch.cuda.set_device(1)
+torch.cuda.set_device(0)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(device)
@@ -52,9 +52,9 @@ def main():
 	model.to(device).train()
 
 
-	with open("traintextCMwithCS", "rb") as fp:
+	with open("traintextCMwithCS.pkl", "rb") as fp:
 	    traintext = pickle.load(fp)
-	with open("trainCMlabelAndSSAndSpan", "rb") as fp:
+	with open("trainCMlabelAndSSAndSpan.pkl", "rb") as fp:
 	    trainlabels = pickle.load(fp)
 
 	for i in range(len(traintext)):
@@ -63,9 +63,9 @@ def main():
 		trainlabels[i]=str(trainlabels[i])
 	# time.sleep(120)
 
-	with open("validtextCMwithCS", "rb") as fp:
+	with open("validtextCMwithCS.pkl", "rb") as fp:
 	    validtext = pickle.load(fp)
-	with open("validCMlabelAndSSAndSpan", "rb") as fp:
+	with open("validCMlabelAndSSAndSpan.pkl", "rb") as fp:
 	    validlabels = pickle.load(fp)
 
 	for i in range(len(validtext)):
