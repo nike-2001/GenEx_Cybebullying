@@ -22,9 +22,14 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
-from transformers.configuration_bart import BartConfig
-from transformers.file_utils import add_start_docstrings, add_start_docstrings_to_callable
-from transformers.modeling_utils import BeamHypotheses, PreTrainedModel, create_position_ids_from_input_ids
+#from transformers.configuration_bart import BartConfig
+#from transformers.file_utils import add_start_docstrings, add_start_docstrings_to_callable
+
+from transformers import BartConfig
+from transformers.file_utils import add_start_docstrings
+from transformers.generation.beam_search import BeamHypotheses
+
+from transformers.modeling_utils import PreTrainedModel
 
 
 logger = logging.getLogger(__name__)
@@ -66,6 +71,30 @@ BART_INPUTS_DOCSTRING = r"""
             See diagram 1 in the paper for more info on the default strategy
 """
 LARGE_NEGATIVE = -1e4
+
+
+def create_position_ids_from_input_ids(input_ids, padding_idx):
+    """
+    Generate position IDs for input IDs, taking into account padding tokens.
+    Args:
+        input_ids: Tensor of shape (batch_size, sequence_length).
+        padding_idx: The padding index to ignore.
+    Returns:
+        position_ids: Tensor of shape (batch_size, sequence_length).
+    """
+    mask = input_ids.ne(padding_idx).int()
+    position_ids = (torch.cumsum(mask, dim=1).type_as(mask) * mask).long() + padding_idx
+    return position_ids
+
+def add_start_docstrings_to_callable(docstring):
+    """
+    This decorator adds a docstring to a callable.
+    """
+    def decorator(func):
+        func.__doc__ = docstring + (func.__doc__ or "")
+        return func
+    return decorator
+
 
 
 def _prepare_bart_decoder_inputs(

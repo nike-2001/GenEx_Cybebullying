@@ -10,7 +10,8 @@ from torch.nn import CrossEntropyLoss
 from model import BartModel
 from model import BartForMaskedLM
 from transformers import BartTokenizer
-from transformers.modeling_bart import make_padding_mask
+#from transformers.modeling_bart import make_padding_mask
+#from transformers import make_padding_mask
 from transformers import BartTokenizer
 # from transformers.models.bart.modeling_bart import make_padding_mask
 from utils.helper import make_padding_mask
@@ -33,6 +34,11 @@ print(device)
 filter_sizes = [1, 2, 3, 4, 5]
 num_filters = [128, 128, 128, 128, 128]
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# Include the manual implementation
+def make_padding_mask(input_ids, padding_idx=1):
+    return input_ids.eq(padding_idx)
+
 
 def main():
 	tokenizer = BartTokenizer.from_pretrained('facebook/bart-large')
