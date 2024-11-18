@@ -81,27 +81,39 @@ def cal_sc_loss(out, idx, cls, tokenizer, style):
 
 
 def cal_bl_loss(out, tgt, idx, tokenizer):
-    '''Caculate the loss of BLEU-based reward'''
+    '''Calculate the loss of BLEU-based reward'''
+    device = out.device  # Ensure everything uses the same device as `out`
+
+    # Move tensors to the correct device
     out = F.softmax(out, dim=-1)
     sample_probs, sample_idx = sample_3d(out)
     greedy_probs, greedy_idx = torch.max(out, dim=-1)
+    tgt = tgt.to(device)  # Ensure tgt is on the same device
+    idx = idx.to(device)  # Ensure idx is on the same device
+    eos_token_id = torch.tensor(tokenizer.eos_token_id, device=device)  # Ensure eos_token_id is on the same device
 
     tgt_sam, tgt_gre, tgt_ref = [], [], []
     for i, s, g, t in zip(idx.cpu(), sample_idx, greedy_idx, tgt):
-        s_e = torch.arange(len(s))[s.eq(tokenizer.eos_token_id)]
-        s_e = s_e[0] if 0<len(s_e) and 0<s_e[0]<i else i-1
-        g_e = torch.arange(len(g))[g.eq(tokenizer.eos_token_id)]
-        g_e = g_e[0] if 0<len(g_e) and 0<g_e[0]<i else i-1
+        # Ensure indices are on the correct device
+        s_e = torch.arange(len(s), device=device)[s.eq(eos_token_id)]
+        s_e = s_e[0] if 0 < len(s_e) and 0 < s_e[0] < i else i - 1
+        g_e = torch.arange(len(g), device=device)[g.eq(eos_token_id)]
+        g_e = g_e[0] if 0 < len(g_e) and 0 < g_e[0] < i else i - 1
 
+        # Append tensors after moving them to CPU for list operations
         tgt_sam.append(s[:s_e].cpu().tolist())
         tgt_gre.append(g[:g_e].cpu().tolist())
         tgt_ref.append(t[1:i].cpu().tolist())
-    # print(tgt_sam)
+
+    # Calculate BLEU rewards
     tgt_sam = cal_bl_reward(tgt_sam, tgt_ref)
     tgt_gre = cal_bl_reward(tgt_gre, tgt_ref)
-    loss_co = cal_reward_loss(sample_probs, (tgt_gre-tgt_sam)*0.2, idx)
+    
+    # Calculate reward loss
+    loss_co = cal_reward_loss(sample_probs, (tgt_gre - tgt_sam) * 0.2, idx)
 
     return loss_co
+
 
 
 def sample_3d(probs, temperature=1):

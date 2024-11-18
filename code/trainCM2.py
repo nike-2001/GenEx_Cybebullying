@@ -163,7 +163,10 @@ def main():
 		#     total_loss_sc.append(loss_sc.item())
 		if (10000 < step or len(train_loader)< step):
 			# print('RL')
-			idx = tgt.ne(tokenizer.pad_token_id).sum(-1)
+			# Ensure tgt and logits are on the same device
+			tgt = tgt.to(device)
+			logits = logits.to(device)
+			idx = tgt.ne(tokenizer.pad_token_id).sum(-1).to(device)
 			loss_co = cal_bl_loss(logits, tgt, idx, tokenizer)
 			total_loss_co.append(loss_co.item())
 
@@ -182,25 +185,26 @@ def main():
 
 
 		if step%2000==0:
+			os.makedirs('SS', exist_ok=True)
 			torch.save(model.state_dict(), 'SS/{}.chkpt'.format(
 			        step))
 
-		# if ((len(train_loader) > 200
-		#      and step % 200 == 0)
-		#         or (len(train_loader) < 200
-		#             and step % len(train_loader) == 0)):
-		#     valid_loss, valid_acc = evaluate(model, valid_loader, loss_fn,
-		#                                      tokenizer, step)
-		    # if eval_loss >= valid_loss:
-		    #     torch.save(model.state_dict(), 'checkpoints/{}_{}_{}_{}.chkpt'.format(
-		    #         opt.model, opt.dataset, opt.order, opt.style))
-		#         print('[Info] The checkpoint file has been updated.')
-		#         eval_loss = valid_loss
-		#         tab = 0
-		#     else:
-		#         tab += 1
-		#     if tab == opt.patience:
-		#         exit()
+		if ((len(train_loader) > 200
+		     and step % 200 == 0)
+		        or (len(train_loader) < 200
+		            and step % len(train_loader) == 0)):
+		    valid_loss, valid_acc = evaluate(model, valid_loader, loss_fn,
+		                                     tokenizer, step)
+		    if eval_loss >= valid_loss:
+		        torch.save(model.state_dict(), 'checkpoints/{}_{}_{}_{}.chkpt'.format(
+		            opt.model, opt.dataset, opt.order, opt.style))
+		        print('[Info] The checkpoint file has been updated.')
+		        eval_loss = valid_loss
+		        tab = 0
+		    else:
+		        tab += 1
+		    if tab == opt.patience:
+		        exit()
 
 
 

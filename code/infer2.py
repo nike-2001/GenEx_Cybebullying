@@ -1,140 +1,73 @@
-import os
-import time
-import argparse
-import numpy as np
-import pandas as pd
-from sklearn.model_selection import train_test_split
-
-
 import torch
-from torch import cuda
-from torch.nn import CrossEntropyLoss
-import nltk
-from model import BartModel
-from model import BartForMaskedLM
-from transformers import BartTokenizer
-from transformers.modeling_bart import make_padding_mask
+from sklearn.metrics import accuracy_score, f1_score, jaccard_score, hamming_loss
+from difflib import SequenceMatcher
+import numpy as np
+from tabulate import tabulate
 
-# from classifier.textcnn import TextCNN
-from utils.optim import ScheduledOptim
-from utils.helper import optimize, evaluate
-from utils.helper import cal_sc_loss, cal_bl_loss
-from utils.dataset import read_data, BARTIterator
-import pickle
-import time
-# from comet import Comet
-
-import random
-
-os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
-# relations=["xNeed","xWant"]
-# word_pairs = {
-#     "it's": "it is",
-#     "don't": "do not",
-#     "doesn't": "does not",
-#     "didn't": "did not",
-#     "you'd": "you would",
-#     "you're": "you are",
-#     "you'll": "you will",
-#     "i'm": "i am",
-#     "they're": "they are",
-#     "that's": "that is",
-#     "what's": "what is",
-#     "couldn't": "could not",
-#     "i've": "i have",
-#     "we've": "we have",
-#     "can't": "cannot",
-#     "i'd": "i would",
-#     "i'd": "i would",
-#     "aren't": "are not",
-#     "isn't": "is not",
-#     "wasn't": "was not",
-#     "weren't": "were not",
-#     "won't": "will not",
-#     "there's": "there is",
-#     "there're": "there are",
-# }
-
-# def process_sent(sentence):
-#     sentence = sentence.lower()
-#     for k, v in word_pairs.items():
-#         sentence = sentence.replace(k, v)
-#     sentence = nltk.word_tokenize(sentence)
-#     return sentence
-
-# def get_commonsense(comet, item):
-#     cs_list = []
-#     input_event = " ".join(item)
-#     for rel in relations:
-#         cs_res = comet.generate(input_event, rel)
-#         # cs_res = [process_sent(item) for item in cs_res]
-#         cs_list.append(cs_res)
-#     return cs_list
-# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-# # comet=Comet('/DATA/sriparna/BartRLCM/pre-trained-formality-transfer/comet-atomic_2020_BART/',device)
+# Define additional metric functions
+def calculate_ratcliff_obershelp(a, b):
+    """Calculate Ratcliff-Obershelp Similarity."""
+    # Ensure inputs are strings
+    a = str(a)
+    b = str(b)
+    return SequenceMatcher(None, a, b).ratio()
 
 
-# # text='The new <USER> stinks 10mins to take my order and another 15 to get it . And stop asking my name like we’re friends'
-# text='Real disappointed in <USER> leaving me high and dry. Ordered some new Iowa gear Tues with 1 day shipping and it hasnt even shipped yet.'
-# # text='Hey guys, I love this product featured on today but don’t see a price? Help a girl out? <  to see the price > <  to ask for a price >'
-# sent=process_sent(text)
-# CS=get_commonsense(comet,sent)
-# print(CS[0][0])
-# print(CS[1][0])
-# text=text+' < '+CS[0][0]+' > '+ '< '+CS[1][0]+' >'
-# print(text)
-torch.cuda.set_device(2)
+def evaluate_metrics(predictions, references, task):
+    """Evaluate and compute all metrics."""
+    metrics = {}
+    metrics['Accuracy'] = accuracy_score(references, predictions)
+    metrics['F1-Score'] = f1_score(references, predictions, average='macro')
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(device)
+    if task == "RD":  # Additional metrics for rationale detection
+        metrics['Jaccard Similarity'] = jaccard_score(references, predictions, average='macro')
+        metrics['Hamming Distance'] = hamming_loss(references, predictions)
+        ros = [
+            calculate_ratcliff_obershelp(pred, ref)
+            for pred, ref in zip(predictions, references)
+        ]
+        metrics['Ratcliff-Obershelp Similarity'] = np.mean(ros)
 
+    return metrics
 
+# Add metrics computation after inference
+def main():
+    # Sample predictions and references for testing
+    predictions = {
+        "CD": ["Bully", "Non_bully", "Bully", "Bully", "Non_bully"],
+        "TI": ["Positive", "Negative", "Negative", "Positive", "Positive"],
+        "SA": ["Negative", "Negative", "Positive", "Negative", "Positive"],
+        "RD": ["Label1", "Label2", "Label3", "Label1", "Label2"]
+    }
 
-tokenizer = BartTokenizer.from_pretrained('facebook/bart-large')
-# for token in ['<E>', '<F>']:
-#     tokenizer.add_tokens(token)
-# if opt.dataset == 'em':
-#     domain = tokenizer.encode('<E>', add_special_tokens=False)[0]
-# else:
-#     domain = tokenizer.encode('<F>', add_special_tokens=False)[0]
-model = BartModel.from_pretrained("facebook/bart-base")
-model.config.output_past = True
-model = BartForMaskedLM.from_pretrained("facebook/bart-base",
-                                        config=model.config)
-# model.to(device).eval()
-model.to('cuda').eval()
-directory=os.listdir('SS')
-for filename in directory:
-        print(filename)
-        if filename!='4000.chkpt':
-            continue
-        model.load_state_dict(torch.load('SS/'+filename))
-        print('loaded')
-        preds=[]
-        df = pd.read_csv('/DATA/sriparna/BartRLCM/pre-trained-formality-transfer/Complaint data annotation (explain)_updated - cd.csv', header=None)
-        print(df.head())
-        df=df[[1, 2]]
-        df = df.iloc[1: , :]
-        train_data,test_data = train_test_split(df, test_size=0.10, random_state=42)
-        test_data.rename(columns = {1:'tweet'}, inplace = True)
-        test_data.rename(columns = {2:'SS'}, inplace = True)
-        print(train_data.head())
-        print('*********')
-        testtext=test_data['tweet'].tolist()
-        testlabels=test_data['SS'].tolist()
+    references = {
+        "CD": ["Bully", "Bully", "Bully", "Non_bully", "Non_bully"],
+        "TI": ["Positive", "Negative", "Negative", "Negative", "Positive"],
+        "SA": ["Negative", "Negative", "Positive", "Positive", "Positive"],
+        "RD": ["Label1", "Label2", "Label2", "Label1", "Label3"]
+    }
 
-        for text in testtext:
-            src=tokenizer.encode(text,return_tensors='pt')
-            generated_ids=model.generate(src.to(device),num_beams=5,max_length=30)
-            text=[tokenizer.decode(g,skip_special_tokens=True,clean_up_tokenization_spaces=False) for g in generated_ids][0]
-            print(text)
-            print(text)
-            preds.append(text)
-        acc=0
-        for i in range(len(preds)):
-            print(preds[i])
-            print(testlabels[i])
-            if preds[i].strip()==testlabels[i].strip():
-                acc+=1
-        print('ACC: {}'.format(acc/len(preds)))
+    # Convert categorical labels into integers for RD (if needed for additional metrics)
+    label_mapping = {"Label1": 0, "Label2": 1, "Label3": 2}
+    rd_predictions = [label_mapping[label] for label in predictions["RD"]]
+    rd_references = [label_mapping[label] for label in references["RD"]]
+
+    # Compute metrics for all tasks
+    cd_metrics = evaluate_metrics(predictions["CD"], references["CD"], task="CD")
+    ti_metrics = evaluate_metrics(predictions["TI"], references["TI"], task="TI")
+    sa_metrics = evaluate_metrics(predictions["SA"], references["SA"], task="SA")
+    rd_metrics = evaluate_metrics(rd_predictions, rd_references, task="RD")
+
+    # Combine and log results
+    results = {
+        "Task": ["CD", "TI", "SA", "RD"],
+        "Accuracy": [cd_metrics["Accuracy"], ti_metrics["Accuracy"], sa_metrics["Accuracy"], rd_metrics["Accuracy"]],
+        "F1-Score": [cd_metrics["F1-Score"], ti_metrics["F1-Score"], sa_metrics["F1-Score"], rd_metrics["F1-Score"]],
+        "Jaccard": ["-", "-", "-", rd_metrics.get("Jaccard Similarity", "-")],
+        "Hamming": ["-", "-", "-", rd_metrics.get("Hamming Distance", "-")],
+        "Ratcliff-Obershelp": ["-", "-", "-", rd_metrics.get("Ratcliff-Obershelp Similarity", "-")]
+    }
+    print(tabulate(results, headers="keys", tablefmt="grid"))
+
+if __name__ == "__main__":
+    main()
