@@ -1,13 +1,21 @@
 # -*- coding: utf-8 -*-
+# This script tokenizes text using NLTK's word tokenizer, with an option to lowercase the input text.
 
 import sys
-import nltk
+import nltk  # Import the Natural Language Toolkit (NLTK) for tokenization
 
-fin = open(sys.argv[1],'r').readlines()
-with open(sys.argv[2],'w') as f:
+# Read input text file line by line
+fin = open(sys.argv[1], 'r').readlines()
+
+# Open the output file for writing tokenized text
+with open(sys.argv[2], 'w') as f:
     for line in fin:
-        if sys.argv[3]=='True':
+        # Check if the third command-line argument is 'True'
+        if sys.argv[3] == 'True':
+            # Tokenize the text and convert to lowercase
             line = nltk.word_tokenize(line.strip().lower())
         else:
+            # Tokenize the text without changing the case
             line = nltk.word_tokenize(line.strip())
-        f.write(' '.join(line)+'\n')
+        # Write the tokenized text to the output file, separated by spaces
+        f.write(' '.join(line) + '\n')
