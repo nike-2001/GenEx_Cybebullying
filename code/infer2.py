@@ -1,73 +1,114 @@
-import torch
-from sklearn.metrics import accuracy_score, f1_score, jaccard_score, hamming_loss
-from difflib import SequenceMatcher
+import os
+import time
+import argparse
 import numpy as np
-from tabulate import tabulate
+import pandas as pd
+from sklearn.model_selection import train_test_split
 
-# Define additional metric functions
-def calculate_ratcliff_obershelp(a, b):
-    """Calculate Ratcliff-Obershelp Similarity."""
-    # Ensure inputs are strings
-    a = str(a)
-    b = str(b)
-    return SequenceMatcher(None, a, b).ratio()
+import torch
+from torch import cuda
+from torch.nn import CrossEntropyLoss
+import nltk
 
+# Importing custom model and tokenizer classes
+from model import BartModel
+from model import BartForMaskedLM
+from transformers import BartTokenizer
+from transformers.modeling_bart import make_padding_mask
 
-def evaluate_metrics(predictions, references, task):
-    """Evaluate and compute all metrics."""
-    metrics = {}
-    metrics['Accuracy'] = accuracy_score(references, predictions)
-    metrics['F1-Score'] = f1_score(references, predictions, average='macro')
+# Importing utility functions for optimization and evaluation
+from utils.optim import ScheduledOptim
+from utils.helper import optimize, evaluate
+from utils.helper import cal_sc_loss, cal_bl_loss
+from utils.dataset import read_data, BARTIterator
+import pickle
 
-    if task == "RD":  # Additional metrics for rationale detection
-        metrics['Jaccard Similarity'] = jaccard_score(references, predictions, average='macro')
-        metrics['Hamming Distance'] = hamming_loss(references, predictions)
-        ros = [
-            calculate_ratcliff_obershelp(pred, ref)
-            for pred, ref in zip(predictions, references)
-        ]
-        metrics['Ratcliff-Obershelp Similarity'] = np.mean(ros)
+# Set CUDA launch blocking to aid debugging GPU operations
+os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
-    return metrics
+# Set the CUDA device to be used for PyTorch computations
+torch.cuda.set_device(2)  # Use CUDA device ID 2
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')  # Check if CUDA is available
+print(device)  # Output the device being used
 
-# Add metrics computation after inference
-def main():
-    # Sample predictions and references for testing
-    predictions = {
-        "CD": ["Bully", "Non_bully", "Bully", "Bully", "Non_bully"],
-        "TI": ["Positive", "Negative", "Negative", "Positive", "Positive"],
-        "SA": ["Negative", "Negative", "Positive", "Negative", "Positive"],
-        "RD": ["Label1", "Label2", "Label3", "Label1", "Label2"]
-    }
+# Load the BART tokenizer
+tokenizer = BartTokenizer.from_pretrained('facebook/bart-large')
 
-    references = {
-        "CD": ["Bully", "Bully", "Bully", "Non_bully", "Non_bully"],
-        "TI": ["Positive", "Negative", "Negative", "Negative", "Positive"],
-        "SA": ["Negative", "Negative", "Positive", "Positive", "Positive"],
-        "RD": ["Label1", "Label2", "Label2", "Label1", "Label3"]
-    }
+# Load a pre-trained BART model
+model = BartModel.from_pretrained("facebook/bart-base")  # Load the base BART model
+model.config.output_past = True  # Enable caching of past key-value states for efficiency
+model = BartForMaskedLM.from_pretrained(
+    "facebook/bart-base",
+    config=model.config
+)  # Initialize BART with a language modeling head
 
-    # Convert categorical labels into integers for RD (if needed for additional metrics)
-    label_mapping = {"Label1": 0, "Label2": 1, "Label3": 2}
-    rd_predictions = [label_mapping[label] for label in predictions["RD"]]
-    rd_references = [label_mapping[label] for label in references["RD"]]
+# Move the model to GPU and set it to evaluation mode
+model.to('cuda').eval()
 
-    # Compute metrics for all tasks
-    cd_metrics = evaluate_metrics(predictions["CD"], references["CD"], task="CD")
-    ti_metrics = evaluate_metrics(predictions["TI"], references["TI"], task="TI")
-    sa_metrics = evaluate_metrics(predictions["SA"], references["SA"], task="SA")
-    rd_metrics = evaluate_metrics(rd_predictions, rd_references, task="RD")
+# Iterate over the files in the directory `SS`
+directory = os.listdir('SS')
+for filename in directory:
+    print(filename)  # Print the filename for debugging
+    if filename != '4000.chkpt':  # Skip files other than the specified checkpoint
+        continue
 
-    # Combine and log results
-    results = {
-        "Task": ["CD", "TI", "SA", "RD"],
-        "Accuracy": [cd_metrics["Accuracy"], ti_metrics["Accuracy"], sa_metrics["Accuracy"], rd_metrics["Accuracy"]],
-        "F1-Score": [cd_metrics["F1-Score"], ti_metrics["F1-Score"], sa_metrics["F1-Score"], rd_metrics["F1-Score"]],
-        "Jaccard": ["-", "-", "-", rd_metrics.get("Jaccard Similarity", "-")],
-        "Hamming": ["-", "-", "-", rd_metrics.get("Hamming Distance", "-")],
-        "Ratcliff-Obershelp": ["-", "-", "-", rd_metrics.get("Ratcliff-Obershelp Similarity", "-")]
-    }
-    print(tabulate(results, headers="keys", tablefmt="grid"))
+    # Load the model weights from the checkpoint
+    model.load_state_dict(torch.load('SS/' + filename))
+    print('loaded')  # Confirm that the weights were loaded
 
-if __name__ == "__main__":
-    main()
+    preds = []  # List to store predictions
+
+    # Load and process the dataset
+    df = pd.read_csv(
+        '/DATA/sriparna/BartRLCM/pre-trained-formality-transfer/Complaint data annotation (explain)_updated - cd.csv',
+        header=None
+    )  # Read the CSV file without headers
+    print(df.head())  # Output the first few rows for debugging
+    df = df[[1, 2]]  # Extract relevant columns (assumed to be text and labels)
+    df = df.iloc[1:, :]  # Skip the first row (usually headers)
+
+    # Split the dataset into training and testing sets
+    train_data, test_data = train_test_split(df, test_size=0.10, random_state=42)
+    test_data.rename(columns={1: 'tweet'}, inplace=True)  # Rename columns for clarity
+    test_data.rename(columns={2: 'SS'}, inplace=True)
+
+    # Output the training data for debugging
+    print(train_data.head())
+    print('*********')
+
+    # Extract tweets and labels from the test data
+    testtext = test_data['tweet'].tolist()
+    testlabels = test_data['SS'].tolist()
+
+    # Generate predictions for the test data
+    for text in testtext:
+        # Tokenize and encode the text
+        src = tokenizer.encode(text, return_tensors='pt')
+
+        # Generate predictions using the model
+        generated_ids = model.generate(
+            src.to(device),
+            num_beams=5,  # Use beam search with 5 beams
+            max_length=30  # Limit the maximum length of the generated sequence
+        )
+
+        # Decode the generated IDs back to text
+        text = [
+            tokenizer.decode(g, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+            for g in generated_ids
+        ][0]
+
+        # Print the generated text for debugging
+        print(text)
+        preds.append(text)  # Append the prediction to the list
+
+    # Calculate accuracy by comparing predictions with labels
+    acc = 0
+    for i in range(len(preds)):
+        print(preds[i])  # Print the predicted text
+        print(testlabels[i])  # Print the true label
+        if preds[i].strip() == testlabels[i].strip():  # Compare predictions and labels
+            acc += 1  # Increment the accuracy counter for correct predictions
+
+    # Print the final accuracy
+    print('ACC: {}'.format(acc / len(preds)))
