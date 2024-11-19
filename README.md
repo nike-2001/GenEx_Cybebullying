@@ -60,8 +60,6 @@ The modifications allowed us to:
 
 ## Citation
 
-If you find this work useful, please cite:
-
 ```bibtex
 @inproceedings{DBLP:conf/emnlp/MaityJJ0B23,
   author       = {Krishanu Maity and
